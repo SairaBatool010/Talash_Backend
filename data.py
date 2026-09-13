@@ -409,6 +409,55 @@ def get_admin_invite(code: str):
     return _ADMIN_INVITES.get(code)
 
 
+# ---------------------------------------------------------------------------
+# Invite requests: person-to-person "let's team up" requests (distinct from
+# _GROUP_INVITES above, which is an existing group owner inviting someone
+# into an already-formed group). Each request gets its own id, which doubles
+# as the grouping key for its request-scoped chat via get_messages/add_message
+# above (reused as-is, with invite_id passed in place of channel_id).
+# ---------------------------------------------------------------------------
+
+_INVITE_REQUESTS = []
+
+
+def all_invite_requests():
+    return _INVITE_REQUESTS
+
+
+def get_invite_request(invite_id: str):
+    for inv in _INVITE_REQUESTS:
+        if inv["id"] == invite_id:
+            return inv
+    return None
+
+
+def save_invite_request(invite: dict):
+    for i, existing in enumerate(_INVITE_REQUESTS):
+        if existing["id"] == invite["id"]:
+            _INVITE_REQUESTS[i] = invite
+            return invite
+    _INVITE_REQUESTS.append(invite)
+    return invite
+
+
+# ---------------------------------------------------------------------------
+# Admin-defined profile form schema — a single stored list of question
+# definitions the admin can read/replace. Starts empty (no custom questions).
+# ---------------------------------------------------------------------------
+
+_FORM_SCHEMA = []
+
+
+def get_form_schema():
+    return _FORM_SCHEMA
+
+
+def save_form_schema(questions: list):
+    global _FORM_SCHEMA
+    _FORM_SCHEMA = questions
+    return _FORM_SCHEMA
+
+
 if __name__ == "__main__":
     profiles = all_profiles()
     print(f"{len(profiles)} profiles loaded")

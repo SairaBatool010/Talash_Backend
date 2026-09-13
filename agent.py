@@ -16,7 +16,7 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from data import all_profiles, all_teams, get_profile, get_team
+from data import all_profiles, all_teams, get_profile, get_team, all_invite_requests
 from recommender import recommend, recommend_for_team_formation, match_components
 
 load_dotenv()
@@ -33,10 +33,15 @@ _pending_invites = []
 # ---------------------------------------------------------------------------
 
 def invite_status_between(from_user_id: str, to_user_id: str) -> str:
-    """'pending' if from_user_id has already invited to_user_id, else 'none'."""
-    for inv in _pending_invites:
+    """
+    Status of the most recent invite request from from_user_id to to_user_id
+    (reads the real HTTP-facing invite-request store in data.py, not the
+    standalone tool-calling demo's _pending_invites list below). Returns
+    'none' if no such request exists.
+    """
+    for inv in all_invite_requests():
         if inv["from_user_id"] == from_user_id and inv["to_user_id"] == to_user_id:
-            return "pending"
+            return "pending" if inv["status"] == "sent" else inv["status"]
     return "none"
 
 
