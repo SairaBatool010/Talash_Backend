@@ -182,6 +182,7 @@ class ProfileQuestion(BaseModel):
 
 class GroupCreateRequest(BaseModel):
     user_id: str
+    name: Optional[str] = None
 
 
 class GroupInviteRequest(BaseModel):
@@ -478,19 +479,25 @@ def _generate_group_code() -> str:
 
 @app.post("/group/create")
 def create_group(request: GroupCreateRequest):
-    if get_profile(request.user_id) is None:
+    creator = get_profile(request.user_id)
+    if creator is None:
         raise HTTPException(status_code=404, detail="User not found")
 
     group_id = next_id("group")
+    group_name = request.name or f"{creator['name']}'s Team"
     group = {
         "id": group_id,
+        "name": group_name,
         "code": _generate_group_code(),
         "owner_id": request.user_id,
         "member_ids": [request.user_id],
+        "capacity": 5,
     }
     save_group(group)
 
-    creator = get_profile(request.user_id)
+    creator["group_id"] = group_id
+    save_profile(creator)
+
     channel_id = next_id("channel")
     save_channel(
         {
@@ -503,7 +510,7 @@ def create_group(request: GroupCreateRequest):
         }
     )
 
-    return {"id": group_id, "code": group["code"]}
+    return {"id": group_id, "code": group["code"], "name": group["name"]}
 
 
 @app.get("/users/search")
@@ -560,7 +567,7 @@ def group_invites(user_id: str = ""):
             {
                 "id": inv["id"],
                 "from_name": from_profile["name"] if from_profile else "Unknown",
-                "group_name": group["id"] if group else "Unknown",
+                "group_name": group.get("name", group["id"]) if group else "Unknown",
                 "status": inv["status"],
             }
         )
@@ -581,6 +588,11 @@ def respond_to_group_invite(invite_id: str, request: GroupInviteRespondRequest):
         if group and invite["to_user_id"] not in group["member_ids"]:
             group["member_ids"].append(invite["to_user_id"])
             save_group(group)
+
+            joiner = get_profile(invite["to_user_id"])
+            if joiner is not None:
+                joiner["group_id"] = invite["group_id"]
+                save_profile(joiner)
 
     return {"status": invite["status"]}
 
