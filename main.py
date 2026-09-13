@@ -26,7 +26,8 @@ from data import (
     create_admin_invite,
     get_admin_invite,
 )
-from agent import get_matches_with_reasons, get_team_matches_with_reasons, detect_team_gaps, send_invite
+from agent import get_matches_with_reasons, get_team_matches_with_reasons, detect_team_gaps, send_invite, generate_explanation
+from recommender import embed
 
 app = FastAPI()
 
@@ -105,6 +106,19 @@ class AdminInviteRequest(BaseModel):
     email: str
 
 
+class EmbeddingsRequest(BaseModel):
+    input: str = ""
+    text: str = ""
+
+
+class RecommendationExplanationRequest(BaseModel):
+    requester: dict
+    candidate: dict
+    score: float
+    components: dict = {}
+    instruction: str = ""
+
+
 class InviteRequest(BaseModel):
     to_user_id: str
     user_id: Optional[str] = None  # frontend's field name for the sender
@@ -136,6 +150,21 @@ class MessageCreateRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/embeddings")
+def create_embedding(request: EmbeddingsRequest):
+    text = request.text or request.input
+    vector = embed(text)
+    return {"embedding": vector.tolist()}
+
+
+@app.post("/recommendation-explanations")
+def recommendation_explanations(request: RecommendationExplanationRequest):
+    explanation = generate_explanation(
+        request.requester, request.candidate, request.score, request.components, request.instruction
+    )
+    return {"explanation": explanation}
 
 
 @app.get("/recommendations/{user_id}")

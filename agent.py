@@ -165,6 +165,42 @@ def detect_team_gaps(team_member_ids: list):
     }
 
 
+def generate_explanation(requester: dict, candidate: dict, score, components: dict, instruction: str = "") -> str:
+    """
+    Generic explanation generator for POST /recommendation-explanations.
+    Unlike generate_invite_reason, this doesn't look up profiles by id — it
+    takes whatever requester/candidate dicts the caller (Bilt's dev-mode
+    recommender) sends directly, since those may not match our internal
+    profile shape exactly.
+    """
+    prompt = f"""Requester profile:
+{json.dumps(requester)}
+
+Candidate profile:
+{json.dumps(candidate)}
+
+Match score: {score}
+Score components: {json.dumps(components)}
+
+{instruction or "Write ONE short, specific sentence explaining why the candidate is a good match for the requester."}
+Reference only skills/bio/interest details that literally appear in the profiles above —
+never attribute a skill or interest to someone who doesn't have it listed. Return ONLY the
+explanation text, no quotes, no JSON, no markdown.
+"""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        text = response.choices[0].message.content
+        return text.strip() if text else ""
+    except Exception:
+        return "This candidate was ranked highly based on skill and interest overlap."
+
+
 def generate_invite_reason(from_user_id: str, to_user_id: str) -> str:
     """
     Server-side fallback for when a client sends an invite without a reason:
