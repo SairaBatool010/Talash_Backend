@@ -13,6 +13,9 @@ team_status on a profile is one of:
 team_id is None for someone not yet on a team.
 """
 
+import random
+import string
+
 _PROFILES = [
     {
         "id": "1",
@@ -277,6 +280,133 @@ def save_team(team: dict):
             return team
     _TEAMS.append(team)
     return team
+
+
+# ---------------------------------------------------------------------------
+# Groups, channels, and messages (Fix 6) — a separate concept from _TEAMS
+# above. _TEAMS is what the recommender scores people against for team
+# formation; _GROUPS/_CHANNELS/_MESSAGES back the frontend's chat/group
+# workflow (create a group, invite into it, post in its channel) and don't
+# feed into recommender.py at all.
+# ---------------------------------------------------------------------------
+
+_GROUPS = []
+_GROUP_INVITES = []
+_CHANNELS = [
+    {
+        "id": "general",
+        "name": "general",
+        "description": "Hackathon-wide announcements and chat",
+        "type": "general",
+        "group_id": None,
+        "allows_posting": True,
+    }
+]
+_MESSAGES = {"general": []}
+
+_next_ids = {}
+
+
+def next_id(kind: str) -> str:
+    n = _next_ids.setdefault(kind, 1)
+    _next_ids[kind] += 1
+    return f"{kind}-{n}"
+
+
+def all_groups():
+    return _GROUPS
+
+
+def get_group(group_id: str):
+    for g in _GROUPS:
+        if g["id"] == group_id:
+            return g
+    return None
+
+
+def save_group(group: dict):
+    for i, existing in enumerate(_GROUPS):
+        if existing["id"] == group["id"]:
+            _GROUPS[i] = group
+            return group
+    _GROUPS.append(group)
+    return group
+
+
+def all_group_invites():
+    return _GROUP_INVITES
+
+
+def get_group_invite(invite_id: str):
+    for inv in _GROUP_INVITES:
+        if inv["id"] == invite_id:
+            return inv
+    return None
+
+
+def save_group_invite(invite: dict):
+    for i, existing in enumerate(_GROUP_INVITES):
+        if existing["id"] == invite["id"]:
+            _GROUP_INVITES[i] = invite
+            return invite
+    _GROUP_INVITES.append(invite)
+    return invite
+
+
+def all_channels():
+    return _CHANNELS
+
+
+def get_channel(channel_id: str):
+    for c in _CHANNELS:
+        if c["id"] == channel_id:
+            return c
+    return None
+
+
+def save_channel(channel: dict):
+    for i, existing in enumerate(_CHANNELS):
+        if existing["id"] == channel["id"]:
+            _CHANNELS[i] = channel
+            return channel
+    _CHANNELS.append(channel)
+    _MESSAGES.setdefault(channel["id"], [])
+    return channel
+
+
+def get_messages(channel_id: str):
+    return _MESSAGES.get(channel_id, [])
+
+
+def add_message(channel_id: str, message: dict):
+    _MESSAGES.setdefault(channel_id, []).append(message)
+    return message
+
+
+# ---------------------------------------------------------------------------
+# Admin-issued registration invite codes: an admin creates one for a named
+# person (before they have a profile/user_id at all), the person later
+# redeems the code via /invite/confirm to learn their assigned user_id and
+# proceed to fill out their profile via POST /profiles.
+# ---------------------------------------------------------------------------
+
+_ADMIN_INVITES = {}  # code -> {"user_id", "name", "email"}
+
+
+def create_admin_invite(name: str, email: str) -> dict:
+    user_id = next_id("invited-user")
+    entry = {"user_id": user_id, "name": name, "email": email}
+    code = _random_code()
+    _ADMIN_INVITES[code] = entry
+    return {"code": code, **entry}
+
+
+def _random_code(length: int = 8) -> str:
+    return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
+
+
+def get_admin_invite(code: str):
+    return _ADMIN_INVITES.get(code)
 
 
 if __name__ == "__main__":

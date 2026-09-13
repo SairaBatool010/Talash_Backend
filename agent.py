@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from data import all_profiles, all_teams, get_profile, get_team
-from recommender import recommend, recommend_for_team_formation
+from recommender import recommend, recommend_for_team_formation, match_components
 
 load_dotenv()
 
@@ -32,6 +32,14 @@ _pending_invites = []
 # Tool implementations
 # ---------------------------------------------------------------------------
 
+def invite_status_between(from_user_id: str, to_user_id: str) -> str:
+    """'pending' if from_user_id has already invited to_user_id, else 'none'."""
+    for inv in _pending_invites:
+        if inv["from_user_id"] == from_user_id and inv["to_user_id"] == to_user_id:
+            return "pending"
+    return "none"
+
+
 def recommend_matches(user_id: str, top_n: int = 5):
     profiles = all_profiles()
     user = get_profile(user_id)
@@ -39,6 +47,30 @@ def recommend_matches(user_id: str, top_n: int = 5):
         return {"error": f"user_id {user_id} not found"}
 
     results = recommend(user_id, profiles, top_n=top_n)
+    candidates = []
+    for p, score in results:
+        components = match_components(user, p)
+        candidates.append(
+            {
+                "user_id": p["id"],
+                "name": p["name"],
+                "bio": p["bio"],
+                "skills_have": p["skills_have"],
+                "skills_want": p["skills_want"],
+                "score": round(score, 3),
+                "shared_skills": components["shared_skills"],
+                "complementary_skills": components["complementary_skills"],
+                "invite_status": invite_status_between(user_id, p["id"]),
+                "components": {
+                    "skill_complementarity": round(components["skill_complementarity"], 3),
+                    "semantic_similarity": round(components["semantic_similarity"], 3),
+                    "mutual_skill_matches": components["mutual_skill_matches"],
+                    "requester_gets": components["requester_gets"],
+                    "candidate_gets": components["candidate_gets"],
+                },
+            }
+        )
+
     return {
         "user": {
             "id": user["id"],
@@ -47,17 +79,7 @@ def recommend_matches(user_id: str, top_n: int = 5):
             "skills_have": user["skills_have"],
             "skills_want": user["skills_want"],
         },
-        "candidates": [
-            {
-                "user_id": p["id"],
-                "name": p["name"],
-                "bio": p["bio"],
-                "skills_have": p["skills_have"],
-                "skills_want": p["skills_want"],
-                "score": round(score, 3),
-            }
-            for p, score in results
-        ],
+        "candidates": candidates,
     }
 
 
@@ -143,11 +165,52 @@ def detect_team_gaps(team_member_ids: list):
     }
 
 
-def send_invite(from_user_id: str, to_user_id: str, reason: str):
+def generate_invite_reason(from_user_id: str, to_user_id: str) -> str:
+    """
+    Server-side fallback for when a client sends an invite without a reason:
+    compute the real match components for this pair and ask the LLM for one
+    grounded sentence, same style as the recommendation reasons.
+    """
+    from_profile = get_profile(from_user_id)
+    to_profile = get_profile(to_user_id)
+    if from_profile is None or to_profile is None:
+        return "Invite sent."
+
+    components = match_components(from_profile, to_profile)
+    prompt = f"""Person sending the invite:
+{json.dumps({"name": from_profile["name"], "skills_have": from_profile["skills_have"], "skills_want": from_profile["skills_want"], "bio": from_profile["bio"]})}
+
+Person being invited:
+{json.dumps({"name": to_profile["name"], "skills_have": to_profile["skills_have"], "skills_want": to_profile["skills_want"], "bio": to_profile["bio"]})}
+
+Match details: {json.dumps(components)}
+
+Write ONE short, specific sentence explaining why the sender is inviting this person,
+referencing only skills/bio details that literally appear above. Return ONLY the sentence,
+no quotes, no JSON.
+"""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        text = response.choices[0].message.content
+        return text.strip() if text else "Invite sent."
+    except Exception:
+        return f"{from_profile['name']} invited {to_profile['name']} based on complementary skills."
+
+
+def send_invite(from_user_id: str, to_user_id: str, reason: str = None):
     from_profile = get_profile(from_user_id)
     to_profile = get_profile(to_user_id)
     if from_profile is None or to_profile is None:
         return {"error": "one or both user_ids not found"}
+
+    if not reason:
+        reason = generate_invite_reason(from_user_id, to_user_id)
 
     invite = {
         "from_user_id": from_user_id,
@@ -229,9 +292,9 @@ TOOLS = [
                 "properties": {
                     "from_user_id": {"type": "string"},
                     "to_user_id": {"type": "string"},
-                    "reason": {"type": "string", "description": "Why this invite is being sent."},
+                    "reason": {"type": "string", "description": "Why this invite is being sent. If omitted, one is generated automatically."},
                 },
-                "required": ["from_user_id", "to_user_id", "reason"],
+                "required": ["from_user_id", "to_user_id"],
             },
         },
     },
@@ -241,7 +304,7 @@ _TOOL_IMPL = {
     "recommend_matches": lambda args: recommend_matches(args["user_id"], args.get("top_n", 5)),
     "team_recommend": lambda args: team_recommend(args["user_id"], args.get("top_n", 5)),
     "detect_team_gaps": lambda args: detect_team_gaps(args["team_member_ids"]),
-    "send_invite": lambda args: send_invite(args["from_user_id"], args["to_user_id"], args["reason"]),
+    "send_invite": lambda args: send_invite(args["from_user_id"], args["to_user_id"], args.get("reason")),
 }
 
 SYSTEM_PROMPT = """You are a matchmaking assistant for a hackathon team-formation app.

@@ -77,6 +77,45 @@ def match_score(profile_a: dict, profile_b: dict) -> float:
     return SEMANTIC_WEIGHT * semantic + SKILL_WEIGHT * skill
 
 
+def match_components(requester: dict, candidate: dict) -> dict:
+    """
+    Full score breakdown for a requester -> candidate match, for API responses
+    that need to show more than just the final combined score.
+
+    requester_gets: skills the candidate has that the requester wants
+    candidate_gets: skills the requester has that the candidate wants
+    mutual_skill_matches: union of requester_gets and candidate_gets (all the
+      "have vs want" pairings that line up between the two people)
+    shared_skills: skills both people already have in common
+    """
+    emb_a = embed(requester.get("bio", ""))
+    emb_b = embed(candidate.get("bio", ""))
+    semantic = max(0.0, min(1.0, _cosine_sim(emb_a, emb_b)))
+
+    skill = skill_complementarity(requester, candidate)
+
+    r_have = set(requester.get("skills_have", []))
+    r_want = set(requester.get("skills_want", []))
+    c_have = set(candidate.get("skills_have", []))
+    c_want = set(candidate.get("skills_want", []))
+
+    requester_gets = sorted(r_want & c_have)
+    candidate_gets = sorted(c_want & r_have)
+    shared_skills = sorted(r_have & c_have)
+    mutual_skill_matches = sorted(set(requester_gets) | set(candidate_gets))
+
+    return {
+        "score": SEMANTIC_WEIGHT * semantic + SKILL_WEIGHT * skill,
+        "semantic_similarity": semantic,
+        "skill_complementarity": skill,
+        "shared_skills": shared_skills,
+        "complementary_skills": requester_gets,
+        "mutual_skill_matches": mutual_skill_matches,
+        "requester_gets": requester_gets,
+        "candidate_gets": candidate_gets,
+    }
+
+
 def recommend(user_id: str, profiles: list, top_n: int = 5) -> list:
     """
     Return up to top_n (profile, score) tuples ranked by match_score,
