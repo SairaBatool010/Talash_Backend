@@ -1,36 +1,48 @@
 """
-Recommender core — no OpenAI dependency, fully testable offline.
+Recommender core.
 
 Combines:
-  - semantic similarity of bios (sentence-transformers embeddings, cosine sim)
+  - semantic similarity of bios (OpenAI embeddings, cosine sim)
   - skill complementarity (mutual "have vs want" overlap)
 into a single weighted match score.
+
+NOTE: this module now calls the OpenAI embeddings API, so — unlike before —
+it requires OPENAI_API_KEY and network access to run; it's no longer testable
+fully offline. This was a deliberate tradeoff to drop sentence-transformers
+(and its torch dependency), which was causing an out-of-memory crash on deploy.
 """
 
+import os
+
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+from openai import OpenAI
 
 from data import all_profiles, all_teams, get_team
+
+load_dotenv()
 
 # Weights are easy to tune here.
 SEMANTIC_WEIGHT = 0.5
 SKILL_WEIGHT = 0.5
 
-_model = None
+EMBEDDING_MODEL = "text-embedding-3-small"
 
-
-def _get_model():
-    global _model
-    if _model is None:
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _model
+_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_embedding_cache = {}
 
 
 def embed(text: str) -> np.ndarray:
-    """Embed a piece of text into a vector using all-MiniLM-L6-v2."""
+    """Embed a piece of text via OpenAI's embeddings API (cached per exact text)."""
     if not text:
         text = ""
-    return _get_model().encode(text, convert_to_numpy=True)
+    if text in _embedding_cache:
+        return _embedding_cache[text]
+
+    response = _client.embeddings.create(model=EMBEDDING_MODEL, input=text)
+    vector = np.array(response.data[0].embedding)
+    _embedding_cache[text] = vector
+    return vector
 
 
 def _cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
